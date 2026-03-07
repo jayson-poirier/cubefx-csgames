@@ -52,8 +52,8 @@ pub fn phase_shift_launch<R: Runtime>(
     alpha: f32,
     dtype: StorageType,
 ) -> Result<(), LaunchError> {
-    let cube_count = CubeCount::new_single();
-    let cube_dim = CubeDim::new_single();
+    let cube_count = CubeCount::new_2d(3, 3);
+    let cube_dim = CubeDim::new_2d(3, 3);
     let vectorization = 1;
 
     phase_shift_kernel::launch::<R>(
@@ -81,7 +81,7 @@ pub(crate) fn phase_shift_kernel<F: Float>(
 ) {
     let windows = input_re.shape(0);
     let channels = input_re.shape(1);
-    for window_index in 0..windows * channels {
+    for window_index in (CUBE_POS_X as usize) * input_re.stride(0)..windows * channels {
         phase_shift_kernel_one_window(
             input_re,
             input_im,
@@ -102,7 +102,7 @@ pub(crate) fn phase_shift_kernel_one_window<F: Float>(
     output_re: &mut Tensor<Line<F>>,
     output_im: &mut Tensor<Line<F>>,
     window_index: usize,
-    alpha: InputScalar,
+    alpha: InputScalar
 ) {
     let num_freq_bins = input_re.shape(input_re.rank() - 1);
 
@@ -116,9 +116,7 @@ pub(crate) fn phase_shift_kernel_one_window<F: Float>(
     let mut output_re_view = output_re.view_mut(output_re_layout);
     let mut output_im_view = output_im.view_mut(output_im_layout);
 
-    // We do it 10 times just to make sure
-    for k in 0..10 * num_freq_bins {
-        let k = k % num_freq_bins;
+    for k in (CUBE_POS_X as usize) * input_re.stride(0)..num_freq_bins {
 
         // Warning: if line size > 1, this will duplicate the same k, while we would want something like [x, x+1, x+2, x+3...
         let theta = Line::cast_from(alpha.get::<F>() * F::cast_from(k));
