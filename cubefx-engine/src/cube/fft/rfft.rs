@@ -1,6 +1,6 @@
 use cubecl::{num_traits::One, prelude::*, std::tensor::TensorHandle};
 
-use crate::cube::FftMode;
+use crate::cube::{FftMode};
 
 use cubecl::std::tensor::{
     AsView as _, AsViewExpand, AsViewMut as _, AsViewMutExpand, layout::plain::PlainLayout,
@@ -15,6 +15,7 @@ use crate::cube::{BatchSignalLayout, fft::fft_inner_compute};
 pub fn rfft<R: Runtime>(
     signal: TensorHandle<R>,
     dtype: StorageType,
+    alpha: f32,
 ) -> (TensorHandle<R>, TensorHandle<R>) {
     // Assumes fft always done on last dim
     let dim = signal.shape.len() - 1;
@@ -45,6 +46,7 @@ pub fn rfft<R: Runtime>(
         spectrum_re.as_ref(),
         spectrum_im.as_ref(),
         dtype,
+        alpha,
     )
     .unwrap();
 
@@ -58,6 +60,7 @@ pub fn rfft_launch<R: Runtime>(
     spectrum_re: TensorHandleRef<R>,
     spectrum_im: TensorHandleRef<R>,
     dtype: StorageType,
+    alpha: f32,
 ) -> Result<(), LaunchError> {
     let cube_count = CubeCount::new_2d(3, 3);
     let cube_dim = CubeDim::new_2d(3, 3);
@@ -70,6 +73,7 @@ pub fn rfft_launch<R: Runtime>(
         signal.as_tensor_arg(vectorization),
         spectrum_re.as_tensor_arg(vectorization),
         spectrum_im.as_tensor_arg(vectorization),
+        InputScalar::new(alpha, dtype),
         *signal.shape.last().unwrap(),
         dtype,
     )
@@ -81,6 +85,7 @@ pub(crate) fn rfft_kernel<F: Float>(
     signal: &Tensor<Line<F>>,
     spectrums_re: &mut Tensor<Line<F>>,
     spectrums_im: &mut Tensor<Line<F>>,
+    alpha: InputScalar,
     #[comptime] num_samples: usize,
     #[define(F)] _dtype: StorageType,
 ) {
@@ -98,6 +103,7 @@ pub(crate) fn rfft_kernel<F: Float>(
             spectrums_re,
             spectrums_im,
             window_index,
+            alpha,
             num_samples,
         );
     }
@@ -112,6 +118,7 @@ pub(crate) fn rfft_kernel_one_window<F: Float>(
     spectrums_re: &mut Tensor<Line<F>>,
     spectrums_im: &mut Tensor<Line<F>>,
     window_index: usize,
+    alpha: InputScalar,
     #[comptime] num_samples: usize,
 ) {
     // The following code allow to ignore the batch index and assume only one window
@@ -145,7 +152,13 @@ pub(crate) fn rfft_kernel_one_window<F: Float>(
     for i in (CUBE_POS_X as usize)..spectrums_re_view.shape() {
         // Warning: this assumes that spectrum views have lines of 1 element
         // If lines had more elements, the ith element would be duplicated as it is
+        let theta = Line::cast_from(alpha.get::<F>() * F::cast_from(i));
+
         spectrums_re_view.write(i, Line::cast_from(spectrum_re[i]));
         spectrums_im_view.write(i, Line::cast_from(spectrum_im[i]));
+        spectrums_re_view.write(i, Line::cast_from(spectrum_re[i]) * theta.cos()
+            - Line::cast_from(spectrum_im[i]) * theta.sin());
+        spectrums_im_view.write(i, Line::cast_from(spectrum_re[i]) * theta.sin()
+            + Line::cast_from(spectrum_im[i]) * theta.cos());
     }
 }

@@ -1,6 +1,6 @@
 mod cube;
 
-use crate::cube::{irfft, phase_shift, rfft};
+use crate::cube::{irfft, rfft};
 use cubecl::{Runtime, ir::StorageType, std::tensor::TensorHandle};
 
 pub struct SignalSpec {
@@ -31,7 +31,6 @@ pub fn phase_shift_effect<R: Runtime>(
     alpha: f32,
     dtype: StorageType,
 ) -> TensorHandle<R> {
-    let (spectrum_re, spectrum_im) = rfft(signal, dtype);
-    let (shifted_re, shifted_im) = phase_shift(spectrum_re, spectrum_im, alpha);
+    let (shifted_re, shifted_im) = rfft(signal, dtype, alpha);
     irfft(shifted_re, shifted_im, dtype)
 }
