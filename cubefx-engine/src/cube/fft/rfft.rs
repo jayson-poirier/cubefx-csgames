@@ -1,4 +1,4 @@
-use cubecl::{prelude::*, std::tensor::TensorHandle};
+use cubecl::{num_traits::One, prelude::*, std::tensor::TensorHandle};
 
 use crate::cube::FftMode;
 
@@ -59,8 +59,8 @@ pub fn rfft_launch<R: Runtime>(
     spectrum_im: TensorHandleRef<R>,
     dtype: StorageType,
 ) -> Result<(), LaunchError> {
-    let cube_count = CubeCount::new_single();
-    let cube_dim = CubeDim::new_single();
+    let cube_count = CubeCount::new_2d(3, 3);
+    let cube_dim = CubeDim::new_2d(3, 3);
     let vectorization = 1;
 
     rfft_kernel::launch::<R>(
@@ -92,7 +92,7 @@ pub(crate) fn rfft_kernel<F: Float>(
 
     let windows = signal.shape(0);
     let channels = signal.shape(1);
-    for window_index in 0..windows * channels {
+    for window_index in (CUBE_POS_X as usize) * spectrums_re.stride(0)..windows * channels {
         rfft_kernel_one_window(
             signal,
             spectrums_re,
@@ -129,9 +129,10 @@ pub(crate) fn rfft_kernel_one_window<F: Float>(
         SharedMemory::<F>::new(num_samples).view_mut(PlainLayout::new(num_samples));
     let mut spectrum_im =
         SharedMemory::<F>::new(num_samples).view_mut(PlainLayout::new(num_samples));
+    let unroll = num_samples.is_one();
 
-    // Load all samples of the window to shared memory
-    for i in 0..num_samples {
+    #[unroll(unroll)]
+    for i in (CUBE_POS_X as usize)..num_samples {
         // Warning: this assumes that signal_view has lines of 1 element
         // For larger lines, iterate over the line's content
         // You can get the line_size of a tensor/view with .line_size()
@@ -141,7 +142,7 @@ pub(crate) fn rfft_kernel_one_window<F: Float>(
 
     fft_inner_compute(&mut spectrum_re, &mut spectrum_im, FftMode::Forward);
 
-    for i in 0..spectrums_re_view.shape() {
+    for i in (CUBE_POS_X as usize)..spectrums_re_view.shape() {
         // Warning: this assumes that spectrum views have lines of 1 element
         // If lines had more elements, the ith element would be duplicated as it is
         spectrums_re_view.write(i, Line::cast_from(spectrum_re[i]));

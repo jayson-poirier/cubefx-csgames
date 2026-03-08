@@ -1,3 +1,4 @@
+use cubecl::num_traits::One;
 use cubecl::prelude::*;
 use cubecl::std::tensor::layout::plain::PlainLayout;
 use cubecl::std::tensor::{
@@ -52,8 +53,8 @@ pub fn irfft_launch<R: Runtime>(
     signal: TensorHandleRef<R>,
     dtype: StorageType,
 ) -> Result<(), LaunchError> {
-    let cube_count = CubeCount::new_single();
-    let cube_dim = CubeDim::new_single();
+    let cube_count = CubeCount::new_2d(3, 3);
+    let cube_dim = CubeDim::new_2d(3, 3);
     let vectorization = 1;
 
     irfft_kernel::launch::<R>(
@@ -119,6 +120,7 @@ pub(crate) fn irfft_kernel_one_batch<F: Float>(
         SharedMemory::<F>::new(num_samples).view_mut(PlainLayout::new(num_samples));
     let mut spectrum_im =
         SharedMemory::<F>::new(num_samples).view_mut(PlainLayout::new(num_samples));
+    let unroll = num_samples.is_one();
 
     // Load all the frequency bins to shared memory
     for i in 0..num_freq_bins {
@@ -139,13 +141,12 @@ pub(crate) fn irfft_kernel_one_batch<F: Float>(
     fft_inner_compute(&mut spectrum_re, &mut spectrum_im, FftMode::Inverse);
 
     // Normalize by number of samples
+    #[unroll(unroll)]
     for i in 0..num_samples {
         spectrum_re[i] = spectrum_re[i] / F::cast_from(num_samples);
         spectrum_im[i] = spectrum_im[i] / F::cast_from(num_samples);
-    }
 
-    // Write full real output
-    for i in 0..num_samples {
+        // Write full real output
         // Warning: this assumes that output_view have lines of 1 element
         // If lines had more elements, the ith element would be duplicated as it is
         signal_view.write(i, Line::cast_from(spectrum_re[i]));
